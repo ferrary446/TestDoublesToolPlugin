@@ -50,7 +50,6 @@ private extension CodeGenerator {
         
         var code = """
 import Foundation
-@testable import PeakTrack
 
 final class \(className): \(protocolInfo.name) {
 
@@ -169,7 +168,6 @@ private extension CodeGenerator {
     func generateStructExtension(_ structInfo: StructInformation) -> String {
         var code = """
 import Foundation
-@testable import PeakTrack
 
 extension \(structInfo.name) {
     static func makeMock(
