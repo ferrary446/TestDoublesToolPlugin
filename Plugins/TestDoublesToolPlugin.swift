@@ -59,21 +59,60 @@ extension TestDoublesToolPlugin: XcodeBuildToolPlugin {
 
 extension TestDoublesToolPlugin {
     /// Shared function that returns a configured build command if the input files should be processed.
-    func createBuildCommand(for inputPath: URL, in outputDirectoryPath: URL, with generatorToolPath: URL, context: Any) throws -> Command? {
-        // Check if the file contains TestDoubles annotations
+    func createBuildCommand(
+        for inputPath: URL,
+        in outputDirectoryPath: URL,
+        with generatorToolPath: URL,
+        context: Any
+    ) throws -> Command? {
         guard inputPath.pathExtension == "swift" else { return nil }
-        
-        let fileContent = try String(contentsOf: inputPath, encoding: .utf8)
-        guard fileContent.contains("// TestDoubles:") else { return nil }
-        
-        // Return a command that will run during the build to generate the output files.
-        let inputName = inputPath.lastPathComponent
+
+        let content = try String(contentsOf: inputPath, encoding: .utf8)
+        guard content.contains("// TestDoubles:") else { return nil }
+
+        let outDir = outputDirectoryPath.appendingPathComponent("DerivedSources", isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+        let outputs = inferOutputs(from: content, outputDir: outDir)
+        guard !outputs.isEmpty else { return nil }
+
         return .buildCommand(
-            displayName: "Generating test doubles from \(inputName)",
+            displayName: "Generating test doubles from \(inputPath.lastPathComponent)",
             executable: generatorToolPath,
-            arguments: ["\(inputPath.path)", "-o", "\(outputDirectoryPath.path)"],
+            arguments: [inputPath.path, "-o", outDir.path],
             inputFiles: [inputPath],
-            outputFiles: [] // Output files are dynamically generated, so we can't predict them here
+            outputFiles: outputs
         )
+    }
+
+    private func inferOutputs(from source: String, outputDir: URL) -> [URL] {
+        var outputs: [URL] = []
+
+        func nextName(after marker: String, regex: String) -> String? {
+            guard let range = source.range(of: marker) else { return nil }
+
+            let tail = String(source[range.upperBound...])
+            let pattern = try! NSRegularExpression(pattern: regex)
+
+            if let match = pattern.firstMatch(in: tail, range: NSRange(tail.startIndex..., in: tail)), let r = Range(match.range(at: 1), in: tail) {
+                return String(tail[r])
+            }
+
+            return nil
+        }
+
+        if let name = nextName(after: "// TestDoubles:spy", regex: #"protocol\s+(\w+)"#) {
+            outputs.append(outputDir.appendingPathComponent("\(name)Spy.swift"))
+        }
+
+        if let name = nextName(after: "// TestDoubles:mock", regex: #"protocol\s+(\w+)"#) {
+            outputs.append(outputDir.appendingPathComponent("\(name)Mock.swift"))
+        }
+
+        if let name = nextName(after: "// TestDoubles:struct", regex: #"struct\s+(\w+)"#) {
+            outputs.append(outputDir.appendingPathComponent("\(name)+Mock.swift"))
+        }
+
+        return outputs
     }
 }

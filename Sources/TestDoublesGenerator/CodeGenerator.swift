@@ -49,6 +49,7 @@ private extension CodeGenerator {
         let className = "\(protocolInfo.name)Spy"
         
         var code = """
+import Foundation
 @testable import PeakTrack
 
 final class \(className): \(protocolInfo.name) {
