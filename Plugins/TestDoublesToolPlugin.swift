@@ -63,7 +63,7 @@ extension TestDoublesToolPlugin {
         // Check if the file contains TestDoubles annotations
         guard inputPath.pathExtension == "swift" else { return nil }
         
-        let fileContent = try String(contentsOf: inputPath)
+        let fileContent = try String(contentsOf: inputPath, encoding: .utf8)
         guard fileContent.contains("// TestDoubles:") else { return nil }
         
         // Return a command that will run during the build to generate the output files.

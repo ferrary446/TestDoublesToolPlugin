@@ -68,13 +68,13 @@ private extension TestDoublesVisitor {
         let name = node.name.text
         let isAsync = node.signature.effectSpecifiers?.asyncSpecifier != nil
         let isThrows = node.signature.effectSpecifiers?.throwsClause != nil
+        let parameterList = node.signature.parameterClause.parameters
 
-        if let parameterList = node.signature.parameterClause.parameters.as(FunctionParameterListSyntax.self) {
-            for parameter in parameterList {
-                let paramName = parameter.firstName.text
-                let paramType = parameter.type.description.trimmingCharacters(in: .whitespacesAndNewlines)
-                parameters.append(ParameterInformation(name: paramName, type: paramType))
-            }
+        for parameter in parameterList {
+            let paramName = parameter.firstName.text
+            let paramType = parameter.type.description.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            parameters.append(ParameterInformation(name: paramName, type: paramType))
         }
 
         let returnType = node.signature.returnClause?.type.description.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -91,7 +91,7 @@ private extension TestDoublesVisitor {
 
 // MARK: - ExtractStructInformation
 private extension TestDoublesVisitor {
-    private func extractStructInformation(from node: StructDeclSyntax) -> StructInformation {
+    func extractStructInformation(from node: StructDeclSyntax) -> StructInformation {
         var properties: [PropertyInformation] = []
         let name = node.name.text
 
