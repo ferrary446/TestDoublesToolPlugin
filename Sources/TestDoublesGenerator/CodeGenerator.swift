@@ -83,7 +83,7 @@ final class \(className): \(protocolInfo.name) {
         // Generate return value properties for methods with return types
         for method in protocolInfo.methods {
             if let returnType = method.returnType, !returnType.isEmpty && returnType != "Void" {
-                code += "    var \(method.name)ReturnValue: \(returnType)!\n"
+                code += "    private let \(method.name)ReturnValue: \(returnType)\n"
             }
         }
         
@@ -91,13 +91,38 @@ final class \(className): \(protocolInfo.name) {
         
         // Generate initializer
         code += "    init("
-        let throwingMethods = protocolInfo.methods.filter { $0.isThrows }
-        if !throwingMethods.isEmpty {
-            let errorParams = throwingMethods.map { "\($0.name)ErrorToThrow: (() -> Error)? = nil" }
-            code += errorParams.joined(separator: ", ")
+        
+        var initParams: [String] = []
+        
+        // Add return value parameters first
+        let methodsWithReturnValues = protocolInfo.methods.filter { method in
+            if let returnType = method.returnType, !returnType.isEmpty && returnType != "Void" {
+                return true
+            }
+            return false
         }
+        
+        for method in methodsWithReturnValues {
+            if let returnType = method.returnType {
+                initParams.append("\(method.name)ReturnValue: \(returnType)")
+            }
+        }
+        
+        // Add error parameters after return values
+        let throwingMethods = protocolInfo.methods.filter { $0.isThrows }
+        for method in throwingMethods {
+            initParams.append("\(method.name)ErrorToThrow: (() -> Error)? = nil")
+        }
+        
+        code += initParams.joined(separator: ", ")
         code += ") {\n"
         
+        // Initialize return values
+        for method in methodsWithReturnValues {
+            code += "        self.\(method.name)ReturnValue = \(method.name)ReturnValue\n"
+        }
+        
+        // Initialize error handlers
         for method in throwingMethods {
             code += "        self.\(method.name)ErrorToThrow = \(method.name)ErrorToThrow\n"
         }
