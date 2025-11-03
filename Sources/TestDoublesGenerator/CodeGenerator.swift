@@ -5,6 +5,9 @@
 //  Created by Ilya Yushkov on 03.11.2025.
 //
 
+import Foundation
+import SwiftParser
+
 struct CodeGenerator {
     let inputFilePath: String
     let outputDirectory: String
@@ -14,7 +17,7 @@ struct CodeGenerator {
         let sourceCode = try String(contentsOf: inputURL)
         
         let tree = Parser.parse(source: sourceCode)
-        let visitor = TestDoublesVisitor()
+        let visitor = TestDoublesVisitor(viewMode: .all)
         visitor.walk(tree)
         
         // Generate spy files
