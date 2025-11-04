@@ -9,80 +9,139 @@ import Foundation
 import PackagePlugin
 
 @main
-struct TestDoublesToolPlugin: BuildToolPlugin {
-    /// Entry point for creating build commands for targets in Swift packages.
-    func createBuildCommands(context: PluginContext, target: Target) async throws -> [Command] {
-        // This plugin only runs for package targets that can have source files.
-        guard let sourceFiles = target.sourceModule?.sourceFiles else { return [] }
-
+struct TestDoublesToolPlugin: CommandPlugin {
+    /// Entry point for command execution in Swift packages.
+    func performCommand(context: PluginContext, arguments: [String]) async throws {
         // Find the code generator tool to run.
         let generatorTool = try context.tool(named: "TestDoublesGenerator")
-
-        // Only process Swift files that contain TestDoubles annotations
-        let swiftFiles = sourceFiles.filter { $0.url.pathExtension == "swift" }
-        var commands: [Command] = []
         
-        for sourceFile in swiftFiles {
-            if let command = try createBuildCommand(for: sourceFile.url, in: context.pluginWorkDirectoryURL, with: generatorTool.url, context: context) {
-                commands.append(command)
+        // Parse arguments to determine target or use all targets
+        let targetNames = Set(arguments)
+        let targetsToProcess = targetNames.isEmpty ? context.package.targets : context.package.targets.filter { targetNames.contains($0.name) }
+        
+        for target in targetsToProcess {
+            // This plugin only runs for package targets that can have source files.
+            guard let sourceFiles = target.sourceModule?.sourceFiles else { continue }
+            
+            print("Processing target: \(target.name)")
+            
+            // Only process Swift files that contain TestDoubles annotations
+            let swiftFiles = sourceFiles.filter { $0.url.pathExtension == "swift" }
+            
+            for sourceFile in swiftFiles {
+                try await processFile(sourceFile.url, with: generatorTool.url, in: context.pluginWorkDirectoryURL)
             }
         }
-        
-        return commands
     }
 }
 
 #if canImport(XcodeProjectPlugin)
 import XcodeProjectPlugin
 
-extension TestDoublesToolPlugin: XcodeBuildToolPlugin {
-    // Entry point for creating build commands for targets in Xcode projects.
-    func createBuildCommands(context: XcodePluginContext, target: XcodeTarget) throws -> [Command] {
+extension TestDoublesToolPlugin: XcodeCommandPlugin {
+    // Entry point for command execution in Xcode projects.
+    func performCommand(context: XcodePluginContext, arguments: [String]) throws {
         // Find the code generator tool to run.
         let generatorTool = try context.tool(named: "TestDoublesGenerator")
-
-        // Only process Swift files that contain TestDoubles annotations
-        let swiftFiles = target.inputFiles.filter { $0.url.pathExtension == "swift" }
-        var commands: [Command] = []
         
-        for inputFile in swiftFiles {
-            if let command = try createBuildCommand(for: inputFile.url, in: context.pluginWorkDirectoryURL, with: generatorTool.url, context: context) {
-                commands.append(command)
+        // Parse arguments to determine targets or use all targets
+        let targetNames = Set(arguments)
+        let targetsToProcess = targetNames.isEmpty ? context.xcodeProject.targets : context.xcodeProject.targets.filter { targetNames.contains($0.displayName) }
+        
+        for target in targetsToProcess {
+            print("Processing Xcode target: \(target.displayName)")
+            
+            // Only process Swift files that contain TestDoubles annotations
+            let swiftFiles = target.inputFiles.filter { $0.url.pathExtension == "swift" }
+            
+            for inputFile in swiftFiles {
+                try processFileSync(inputFile.url, with: generatorTool.url, in: context.pluginWorkDirectoryURL)
             }
         }
-        
-        return commands
     }
 }
 
 #endif
 
 extension TestDoublesToolPlugin {
-    /// Shared function that returns a configured build command if the input files should be processed.
-    func createBuildCommand(
-        for inputPath: URL,
-        in outputDirectoryPath: URL,
+    /// Process a file asynchronously, executing the generator tool if needed.
+    func processFile(
+        _ inputPath: URL,
         with generatorToolPath: URL,
-        context: Any
-    ) throws -> Command? {
-        guard inputPath.pathExtension == "swift" else { return nil }
+        in workingDirectory: URL
+    ) async throws {
+        guard inputPath.pathExtension == "swift" else { return }
 
         let content = try String(contentsOf: inputPath, encoding: .utf8)
-        guard content.contains("// TestDoubles:") else { return nil }
+        guard content.contains("// TestDoubles:") else { 
+            print("Skipping \(inputPath.lastPathComponent) - no TestDoubles annotations found")
+            return 
+        }
 
-        let outDir = outputDirectoryPath.appendingPathComponent("DerivedSources", isDirectory: true)
+        let outDir = workingDirectory.appendingPathComponent("DerivedSources", isDirectory: true)
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
         let outputs = inferOutputs(from: content, outputDir: outDir)
-        guard !outputs.isEmpty else { return nil }
+        guard !outputs.isEmpty else { 
+            print("Skipping \(inputPath.lastPathComponent) - no valid output files detected")
+            return 
+        }
 
-        return .buildCommand(
-            displayName: "Generating test doubles from \(inputPath.lastPathComponent)",
-            executable: generatorToolPath,
-            arguments: [inputPath.path, "-o", outDir.path],
-            inputFiles: [inputPath],
-            outputFiles: outputs
-        )
+        print("Generating test doubles from \(inputPath.lastPathComponent)")
+        
+        // Execute the generator tool
+        let process = Process()
+        process.executableURL = generatorToolPath
+        process.arguments = [inputPath.path, "-o", outDir.path]
+        
+        try process.run()
+        process.waitUntilExit()
+        
+        if process.terminationStatus == 0 {
+            print("✅ Generated files: \(outputs.map { $0.lastPathComponent }.joined(separator: ", "))")
+        } else {
+            print("❌ Failed to generate test doubles for \(inputPath.lastPathComponent)")
+        }
+    }
+    
+    /// Synchronous version for Xcode plugin compatibility.
+    func processFileSync(
+        _ inputPath: URL,
+        with generatorToolPath: URL,
+        in workingDirectory: URL
+    ) throws {
+        guard inputPath.pathExtension == "swift" else { return }
+
+        let content = try String(contentsOf: inputPath, encoding: .utf8)
+        guard content.contains("// TestDoubles:") else { 
+            print("Skipping \(inputPath.lastPathComponent) - no TestDoubles annotations found")
+            return 
+        }
+
+        let outDir = workingDirectory.appendingPathComponent("DerivedSources", isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+        let outputs = inferOutputs(from: content, outputDir: outDir)
+        guard !outputs.isEmpty else { 
+            print("Skipping \(inputPath.lastPathComponent) - no valid output files detected")
+            return 
+        }
+
+        print("Generating test doubles from \(inputPath.lastPathComponent)")
+        
+        // Execute the generator tool
+        let process = Process()
+        process.executableURL = generatorToolPath
+        process.arguments = [inputPath.path, "-o", outDir.path]
+        
+        try process.run()
+        process.waitUntilExit()
+        
+        if process.terminationStatus == 0 {
+            print("✅ Generated files: \(outputs.map { $0.lastPathComponent }.joined(separator: ", "))")
+        } else {
+            print("❌ Failed to generate test doubles for \(inputPath.lastPathComponent)")
+        }
     }
 
     private func inferOutputs(from source: String, outputDir: URL) -> [URL] {

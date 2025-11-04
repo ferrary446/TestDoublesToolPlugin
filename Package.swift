@@ -25,7 +25,12 @@ let package = Package(
         ),
         .plugin(
             name: "TestDoublesToolPlugin",
-            capability: .buildTool(),
+            capability: .command(
+                intent: .custom(verb: "generate-test-doubles", description: "Generate test doubles from annotated Swift files"),
+                permissions: [
+                    .writeToPackageDirectory(reason: "This plugin generates test double files in the package directory")
+                ]
+            ),
             dependencies: ["TestDoublesGenerator"]
         )
     ]
