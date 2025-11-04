@@ -80,13 +80,58 @@ extension TestDoublesToolPlugin: XcodeCommandPlugin {
         }
         
         print("✅ Plugin completed. Processed \(totalFilesProcessed) files total.")
-        print("📌 Next step: Add the generated files from TestDoubles/ folder to your test target in Xcode")
     }
 }
 
 #endif
 
 extension TestDoublesToolPlugin {
+    /// Determines the appropriate test doubles output directory based on the source file structure
+    private func determineTestDoublesPath(
+        for sourceFile: URL,
+        projectDirectory: URL,
+        targetName: String
+    ) -> URL {
+        // Get the relative path from project directory to source file
+        let relativePath = sourceFile.path.replacingOccurrences(of: projectDirectory.path + "/", with: "")
+        
+        // Extract the path components
+        let pathComponents = relativePath.split(separator: "/").map(String.init)
+        
+        // Find the main target name in the path (usually the first component after project root)
+        guard let mainTargetIndex = pathComponents.firstIndex(where: { component in
+            // Look for common main target patterns
+            return !component.hasSuffix("Tests") && 
+                   !component.hasSuffix("UITests") && 
+                   component != "TestDoubles" &&
+                   component.first?.isUppercase == true
+        }) else {
+            // Fallback: create TestDoubles in project root with mirrored structure
+            let remainingPath = pathComponents.dropFirst().dropLast().joined(separator: "/")
+            return projectDirectory
+                .appendingPathComponent("\(targetName.replacingOccurrences(of: "Tests", with: ""))Tests")
+                .appendingPathComponent("TestDoubles")
+                .appendingPathComponent(remainingPath)
+        }
+        
+        let mainTargetName = pathComponents[mainTargetIndex]
+        let testTargetName = mainTargetName + "Tests"
+        
+        // Get the path after the main target directory
+        let pathAfterTarget = pathComponents[(mainTargetIndex + 1)...].dropLast() // Drop the file name
+        let relativeDirPath = pathAfterTarget.joined(separator: "/")
+        
+        // Construct the test doubles path: ProjectRoot/MainTargetTests/TestDoubles/...
+        var testDoublesPath = projectDirectory
+            .appendingPathComponent(testTargetName)
+            .appendingPathComponent("TestDoubles")
+        
+        if !relativeDirPath.isEmpty {
+            testDoublesPath = testDoublesPath.appendingPathComponent(relativeDirPath)
+        }
+        
+        return testDoublesPath
+    }
     /// Process a file asynchronously, executing the generator tool if needed.
     func processFile(
         _ inputPath: URL,
@@ -163,8 +208,12 @@ extension TestDoublesToolPlugin {
             return 
         }
 
-        // Create TestDoubles directory in project
-        let testDoublesDir = projectDirectory.appendingPathComponent("TestDoubles", isDirectory: true)
+        // Create TestDoubles directory with mirrored structure
+        let testDoublesDir = determineTestDoublesPath(
+            for: inputPath,
+            projectDirectory: projectDirectory,
+            targetName: targetName
+        )
         try FileManager.default.createDirectory(at: testDoublesDir, withIntermediateDirectories: true)
 
         let outputs = inferOutputs(from: content, outputDir: testDoublesDir)
@@ -194,9 +243,9 @@ extension TestDoublesToolPlugin {
             let output = String(data: data, encoding: .utf8) ?? ""
             
             if process.terminationStatus == 0 {
-                print("✅ Generated files in TestDoubles/: \(outputs.map { $0.lastPathComponent }.joined(separator: ", "))")
+                print("✅ Generated files: \(outputs.map { $0.lastPathComponent }.joined(separator: ", "))")
                 print("📁 Files created at: \(testDoublesDir.path)")
-                print("➡️  Add these files to your \(targetName.contains("Test") ? targetName : targetName + "Tests") target in Xcode")
+                print("➡️  Add these files to your test target in Xcode")
                 
                 if !output.isEmpty {
                     print("   Generator output: \(output)")
