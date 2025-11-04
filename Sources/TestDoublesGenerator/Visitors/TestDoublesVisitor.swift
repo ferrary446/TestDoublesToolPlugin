@@ -100,7 +100,21 @@ private extension TestDoublesVisitor {
                 for binding in variable.bindings {
                     if let identifier = binding.pattern.as(IdentifierPatternSyntax.self) {
                         let propName = identifier.identifier.text
-                        let propType = binding.typeAnnotation?.type.description.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown"
+                        // Get the full type description including attributes like @escaping
+                        let propType: String
+                        if let typeAnnotation = binding.typeAnnotation {
+                            // Get the complete type annotation description which includes : and attributes
+                            let fullDescription = typeAnnotation.description.trimmingCharacters(in: .whitespacesAndNewlines)
+                            
+                            // Remove the ": " prefix from the type annotation
+                            if fullDescription.hasPrefix(": ") {
+                                propType = String(fullDescription.dropFirst(2))
+                            } else {
+                                propType = fullDescription
+                            }
+                        } else {
+                            propType = "Unknown"
+                        }
                         properties.append(PropertyInformation(name: propName, type: propType))
                     }
                 }

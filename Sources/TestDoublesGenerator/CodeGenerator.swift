@@ -206,8 +206,24 @@ extension \(structInfo.name) {
 """
         
         let paramStrings = structInfo.properties.map { property in
-            let defaultValue = generateDefaultValue(for: property.type)
-            return "        \(property.name): \(property.type) = \(defaultValue)"
+            let paramTypeForSignature: String = {
+                if property.type.contains("->") {
+                    return addEscapingIfNeeded(toFunctionType: property.type)
+                } else {
+                    return property.type
+                }
+            }()
+
+            let defaultValue: String = {
+                if property.type.contains("->") {
+                    let cleanedType = cleanParameterType(property.type)
+                    return generateClosureDefault(for: cleanedType)
+                } else {
+                    return generateDefaultValue(for: property.type)
+                }
+            }()
+
+            return "        \(property.name): \(paramTypeForSignature) = \(defaultValue)"
         }
         
         code += paramStrings.joined(separator: ",\n")
@@ -266,6 +282,36 @@ private extension CodeGenerator {
             .replacingOccurrences(of: "@escaping", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// Add @escaping in function signature, if it necessary.
+    /// Working with optional and sendable closures.
+    func addEscapingIfNeeded(toFunctionType type: String) -> String {
+        if type.contains("@escaping") {
+            return type
+        }
+
+        let t = type.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if t.hasPrefix("@Sendable") {
+            return t.replacingOccurrences(of: "@Sendable", with: "@Sendable @escaping")
+        }
+
+        if t.hasSuffix("?") {
+            let base = String(t.dropLast()).trimmingCharacters(in: .whitespaces)
+            if base.hasPrefix("(") {
+                let inner = base.trimmingCharacters(in: CharacterSet(charactersIn: "() "))
+                return "(@escaping (\(inner)))?"
+            } else {
+                return "(@escaping \(base))?"
+            }
+        }
+
+        if t.hasPrefix("(") && t.contains("->") {
+            return "@escaping " + t
+        }
+
+        return "@escaping " + t
+    }
 }
 
 // MARK: - GenerateDefaultValue
@@ -287,6 +333,11 @@ private extension CodeGenerator {
         case let optionalType where optionalType.hasSuffix("?"):
             return "nil"
         default:
+            // Handle closure/function types
+            if type.contains("->") {
+                return generateClosureDefault(for: type)
+            }
+            
             // Try to extract the type name for custom types
             let cleanType = type.trimmingCharacters(in: .whitespacesAndNewlines)
             if cleanType.contains("<") {
@@ -304,5 +355,67 @@ private extension CodeGenerator {
             let typeName = cleanType.components(separatedBy: "<").first ?? cleanType
             return "\"\(typeName.lowercased())\""
         }
+    }
+    
+    /// Generates default closure implementations for function types
+    func generateClosureDefault(for type: String) -> String {
+        // Type should already be cleaned of @escaping when passed here
+        let cleanType = type.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Extract parameter count and return type for better closure generation
+        if let arrowRange = cleanType.range(of: "->") {
+            let parametersPart = String(cleanType[..<arrowRange.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let returnTypePart = String(cleanType[arrowRange.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // Count parameters to generate appropriate closure syntax
+            let parameterCount = countClosureParameters(in: parametersPart)
+            
+            // Generate closure with appropriate parameter handling
+            if returnTypePart == "Void" {
+                if parameterCount == 0 {
+                    return "{}"
+                } else if parameterCount == 1 {
+                    return "{ _ in }"
+                } else {
+                    let parameters = (0..<parameterCount).map { "param\($0)" }.joined(separator: ", ")
+                    return "{ \(parameters) in }"
+                }
+            } else {
+                // Closure with return value
+                let defaultReturnValue = generateDefaultValue(for: returnTypePart)
+                if parameterCount == 0 {
+                    return "{ \(defaultReturnValue) }"
+                } else if parameterCount == 1 {
+                    return "{ _ in \(defaultReturnValue) }"
+                } else {
+                    let parameters = (0..<parameterCount).map { "param\($0)" }.joined(separator: ", ")
+                    return "{ \(parameters) in \(defaultReturnValue) }"
+                }
+            }
+        }
+        
+        // Fallback for malformed function types
+        return "{}"
+    }
+    
+    /// Counts the number of parameters in a closure type signature
+    func countClosureParameters(in parametersPart: String) -> Int {
+        let trimmed = parametersPart.trimmingCharacters(in: CharacterSet(charactersIn: "() "))
+        
+        // Empty parameters
+        if trimmed.isEmpty {
+            return 0
+        }
+        
+        // Single parameter without parentheses
+        if !parametersPart.contains("(") || !parametersPart.contains(")") {
+            return 1
+        }
+        
+        // Count commas inside the parentheses (rough approximation)
+        let commaCount = trimmed.filter { $0 == "," }.count
+        return commaCount + 1
     }
 }
