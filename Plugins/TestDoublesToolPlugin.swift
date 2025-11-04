@@ -41,23 +41,46 @@ import XcodeProjectPlugin
 extension TestDoublesToolPlugin: XcodeCommandPlugin {
     // Entry point for command execution in Xcode projects.
     func performCommand(context: XcodePluginContext, arguments: [String]) throws {
+        print("🚀 TestDoublesToolPlugin starting in Xcode...")
+        print("📁 Working directory: \(context.pluginWorkDirectoryURL)")
+        print("📁 Project directory: \(context.xcodeProject.directoryURL)")
+        print("🎯 Arguments: \(arguments)")
+        
         // Find the code generator tool to run.
+        do {
+            let generatorTool = try context.tool(named: "TestDoublesGenerator")
+            print("🔧 Found generator tool at: \(generatorTool.url)")
+        } catch {
+            print("❌ Failed to find TestDoublesGenerator tool: \(error)")
+            throw error
+        }
+        
         let generatorTool = try context.tool(named: "TestDoublesGenerator")
         
         // Parse arguments to determine targets or use all targets
         let targetNames = Set(arguments)
         let targetsToProcess = targetNames.isEmpty ? context.xcodeProject.targets : context.xcodeProject.targets.filter { targetNames.contains($0.displayName) }
         
+        print("📋 Found \(context.xcodeProject.targets.count) total targets")
+        print("🎯 Processing \(targetsToProcess.count) targets: \(targetsToProcess.map { $0.displayName })")
+        
+        var totalFilesProcessed = 0
+        
         for target in targetsToProcess {
-            print("Processing Xcode target: \(target.displayName)")
+            print("📂 Processing Xcode target: \(target.displayName) (\(target.inputFiles.count) files)")
             
             // Only process Swift files that contain TestDoubles annotations
             let swiftFiles = target.inputFiles.filter { $0.url.pathExtension == "swift" }
+            print("   📝 Swift files: \(swiftFiles.count)")
             
             for inputFile in swiftFiles {
-                try processFileSync(inputFile.url, with: generatorTool.url, in: context.pluginWorkDirectoryURL)
+                try processFileForXcode(inputFile.url, with: generatorTool.url, projectDirectory: context.xcodeProject.directoryURL, targetName: target.displayName)
+                totalFilesProcessed += 1
             }
         }
+        
+        print("✅ Plugin completed. Processed \(totalFilesProcessed) files total.")
+        print("📌 Next step: Add the generated files from TestDoubles/ folder to your test target in Xcode")
     }
 }
 
@@ -87,20 +110,107 @@ extension TestDoublesToolPlugin {
             return 
         }
 
-        print("Generating test doubles from \(inputPath.lastPathComponent)")
+        print("🔧 Generating test doubles from \(inputPath.lastPathComponent)")
         
         // Execute the generator tool
         let process = Process()
         process.executableURL = generatorToolPath
         process.arguments = [inputPath.path, "-o", outDir.path]
         
-        try process.run()
-        process.waitUntilExit()
+        // Capture output for better debugging
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
         
-        if process.terminationStatus == 0 {
-            print("✅ Generated files: \(outputs.map { $0.lastPathComponent }.joined(separator: ", "))")
-        } else {
-            print("❌ Failed to generate test doubles for \(inputPath.lastPathComponent)")
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            // Read output
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            
+            if process.terminationStatus == 0 {
+                print("✅ Generated files: \(outputs.map { $0.lastPathComponent }.joined(separator: ", "))")
+                if !output.isEmpty {
+                    print("   Output: \(output)")
+                }
+            } else {
+                print("❌ Failed to generate test doubles for \(inputPath.lastPathComponent)")
+                print("   Exit code: \(process.terminationStatus)")
+                if !output.isEmpty {
+                    print("   Error output: \(output)")
+                }
+            }
+        } catch {
+            print("❌ Failed to execute generator tool: \(error)")
+            throw error
+        }
+    }
+    
+    /// Process a file for Xcode projects, generating files in the project structure.
+    func processFileForXcode(
+        _ inputPath: URL,
+        with generatorToolPath: URL,
+        projectDirectory: URL,
+        targetName: String
+    ) throws {
+        guard inputPath.pathExtension == "swift" else { return }
+
+        let content = try String(contentsOf: inputPath, encoding: .utf8)
+        guard content.contains("// TestDoubles:") else { 
+            print("Skipping \(inputPath.lastPathComponent) - no TestDoubles annotations found")
+            return 
+        }
+
+        // Create TestDoubles directory in project
+        let testDoublesDir = projectDirectory.appendingPathComponent("TestDoubles", isDirectory: true)
+        try FileManager.default.createDirectory(at: testDoublesDir, withIntermediateDirectories: true)
+
+        let outputs = inferOutputs(from: content, outputDir: testDoublesDir)
+        guard !outputs.isEmpty else { 
+            print("Skipping \(inputPath.lastPathComponent) - no valid output files detected")
+            return 
+        }
+
+        print("🔧 Generating test doubles from \(inputPath.lastPathComponent) for Xcode")
+        
+        // Execute the generator tool
+        let process = Process()
+        process.executableURL = generatorToolPath
+        process.arguments = [inputPath.path, "-o", testDoublesDir.path]
+        
+        // Capture output for better debugging
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            // Read output
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            
+            if process.terminationStatus == 0 {
+                print("✅ Generated files in TestDoubles/: \(outputs.map { $0.lastPathComponent }.joined(separator: ", "))")
+                print("📁 Files created at: \(testDoublesDir.path)")
+                print("➡️  Add these files to your \(targetName.contains("Test") ? targetName : targetName + "Tests") target in Xcode")
+                
+                if !output.isEmpty {
+                    print("   Generator output: \(output)")
+                }
+            } else {
+                print("❌ Failed to generate test doubles for \(inputPath.lastPathComponent)")
+                print("   Exit code: \(process.terminationStatus)")
+                if !output.isEmpty {
+                    print("   Error output: \(output)")
+                }
+            }
+        } catch {
+            print("❌ Failed to execute generator tool: \(error)")
+            throw error
         }
     }
     
