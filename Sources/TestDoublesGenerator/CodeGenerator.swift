@@ -16,27 +16,30 @@ struct CodeGenerator {
         let inputURL = URL(fileURLWithPath: inputFilePath)
         let sourceCode = try String(contentsOf: inputURL)
         
+        // Extract project name from the file path
+        let projectName = extractProjectName(from: inputFilePath)
+        
         let tree = Parser.parse(source: sourceCode)
         let visitor = TestDoublesVisitor(viewMode: .all)
         visitor.walk(tree)
         
         // Generate spy files
         for spy in visitor.spies {
-            let spyCode = generateSpy(spy)
+            let spyCode = generateSpy(spy, projectName: projectName)
             let outputPath = outputDirectory + "/" + spy.name + "Spy.swift"
             try spyCode.write(to: URL(fileURLWithPath: outputPath), atomically: true, encoding: .utf8)
         }
         
         // Generate mock files
         for mock in visitor.mocks {
-            let mockCode = generateMock(mock)
+            let mockCode = generateMock(mock, projectName: projectName)
             let outputPath = outputDirectory + "/" + mock.name + "Mock.swift"
             try mockCode.write(to: URL(fileURLWithPath: outputPath), atomically: true, encoding: .utf8)
         }
         
         // Generate struct extensions
         for structInfo in visitor.structs {
-            let extensionCode = generateStructExtension(structInfo)
+            let extensionCode = generateStructExtension(structInfo, projectName: projectName)
             let outputPath = outputDirectory + "/" + structInfo.name + "+Mock.swift"
             try extensionCode.write(to: URL(fileURLWithPath: outputPath), atomically: true, encoding: .utf8)
         }
@@ -45,11 +48,12 @@ struct CodeGenerator {
 
 // MARK: - GenerateSpy
 private extension CodeGenerator {
-    func generateSpy(_ protocolInfo: ProtocolInformation) -> String {
+    func generateSpy(_ protocolInfo: ProtocolInformation, projectName: String) -> String {
         let className = "\(protocolInfo.name)Spy"
         
         var code = """
 import Foundation
+@testable import \(projectName)
 
 final class \(className): \(protocolInfo.name) {
 
@@ -183,17 +187,18 @@ final class \(className): \(protocolInfo.name) {
 
 // MARK: - GenerateMock
 private extension CodeGenerator {
-    func generateMock(_ protocolInfo: ProtocolInformation) -> String {
+    func generateMock(_ protocolInfo: ProtocolInformation, projectName: String) -> String {
         // Similar to spy but with different behavior - placeholder for now
-        return generateSpy(protocolInfo).replacingOccurrences(of: "Spy", with: "Mock")
+        return generateSpy(protocolInfo, projectName: projectName).replacingOccurrences(of: "Spy", with: "Mock")
     }
 }
 
 // MARK: - GenerateStruct
 private extension CodeGenerator {
-    func generateStructExtension(_ structInfo: StructInformation) -> String {
+    func generateStructExtension(_ structInfo: StructInformation, projectName: String) -> String {
         var code = """
 import Foundation
+@testable import \(projectName)
 
 extension \(structInfo.name) {
     static func makeMock(
@@ -221,6 +226,36 @@ extension \(structInfo.name) {
 
 // MARK: - Helper Functions
 private extension CodeGenerator {
+    /// Extracts the project name from the file path
+    /// Example: "/Users/user/Desktop/PeakTrack/PeakTrack/File.swift" -> "PeakTrack"
+    func extractProjectName(from filePath: String) -> String {
+        let url = URL(fileURLWithPath: filePath)
+        let pathComponents = url.pathComponents
+        
+        // Look for the main project directory by finding repeated directory names
+        // or look for .xcodeproj patterns in parent directories
+        for (index, component) in pathComponents.enumerated() {
+            // Skip common non-project directories
+            if component == "/" || component == "Users" || component.hasPrefix(".") {
+                continue
+            }
+            
+            // Look for next component that matches (common pattern: /ProjectName/ProjectName/)
+            if index + 1 < pathComponents.count && pathComponents[index + 1] == component {
+                return component
+            }
+            
+            // If we find a component that looks like a project name (capitalized, not common directory)
+            if component.first?.isUppercase == true && 
+               !["Desktop", "Documents", "Downloads", "Library"].contains(component) {
+                return component
+            }
+        }
+        
+        // Fallback: use the directory name that contains the source file
+        return url.deletingLastPathComponent().lastPathComponent
+    }
+    
     /// Cleans parameter types for use in property declarations
     /// Removes @escaping and other function-only attributes that are invalid in struct properties
     /// 
