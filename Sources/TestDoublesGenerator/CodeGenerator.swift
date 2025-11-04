@@ -60,7 +60,8 @@ final class \(className): \(protocolInfo.name) {
             if !method.parameters.isEmpty {
                 code += "    struct \(method.name.capitalized)Call {\n"
                 for param in method.parameters {
-                    code += "        let \(param.name): \(param.type)\n"
+                    let cleanType = cleanParameterType(param.type)
+                    code += "        let \(param.name): \(cleanType)\n"
                 }
                 code += "    }\n\n"
             }
@@ -215,6 +216,20 @@ extension \(structInfo.name) {
         code += "}\n"
         
         return code
+    }
+}
+
+// MARK: - Helper Functions
+private extension CodeGenerator {
+    /// Cleans parameter types for use in property declarations
+    /// Removes @escaping and other function-only attributes that are invalid in struct properties
+    /// 
+    /// Example: "@escaping (_ id: UUID) -> Void" becomes "(_ id: UUID) -> Void"
+    func cleanParameterType(_ type: String) -> String {
+        return type
+            .replacingOccurrences(of: "@escaping ", with: "")
+            .replacingOccurrences(of: "@escaping", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
